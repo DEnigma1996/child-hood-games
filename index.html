@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Neon Brick Click Blast</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg1: #0a0f2d;
+      --bg2: #21063f;
+      --panel: rgba(9, 18, 40, 0.75);
+      --text: #f4f8ff;
+      --accent: #6bf7ff;
+      --accent2: #ff53d2;
+      --gold: #ffdd56;
+    }
+
+    * {
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Trebuchet MS", "Segoe UI", system-ui, sans-serif;
+      color: var(--text);
+      background: radial-gradient(circle at 20% 20%, #2f3d8b 0%, transparent 38%),
+                  radial-gradient(circle at 80% 5%, #6d1f79 0%, transparent 35%),
+                  linear-gradient(165deg, var(--bg1), var(--bg2));
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+    }
+
+    .wrap {
+      width: min(92vw, 920px);
+      display: grid;
+      gap: 14px;
+    }
+
+    .hud {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      background: var(--panel);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 14px;
+      padding: 10px 14px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+      backdrop-filter: blur(5px);
+    }
+
+    .stat {
+      font-weight: 700;
+      letter-spacing: 0.3px;
+      text-shadow: 0 0 14px rgba(107, 247, 255, 0.35);
+    }
+
+    .game-shell {
+      position: relative;
+      border-radius: 16px;
+      overflow: hidden;
+      border: 2px solid rgba(255, 255, 255, 0.2);
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.42), 0 0 0 1px rgba(107, 247, 255, 0.2) inset;
+      background: rgba(9, 16, 35, 0.5);
+    }
+
+    canvas {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      display: block;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(0, 0, 0, 0.18));
+    }
+
+    .overlay {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      background: rgba(1, 5, 16, 0.72);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+      padding: 20px;
+    }
+
+    .overlay.show {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .panel {
+      background: rgba(15, 26, 55, 0.88);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 16px;
+      padding: 16px;
+      max-width: 420px;
+      box-shadow: 0 0 30px rgba(107, 247, 255, 0.18);
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: clamp(1.2rem, 3vw, 1.9rem);
+      color: var(--accent);
+    }
+
+    p {
+      margin: 8px 0;
+      opacity: 0.9;
+      line-height: 1.35;
+    }
+
+    button {
+      margin-top: 10px;
+      border: 0;
+      border-radius: 999px;
+      padding: 10px 18px;
+      cursor: pointer;
+      font-size: 1rem;
+      font-weight: 700;
+      color: #00153f;
+      background: linear-gradient(130deg, #6bf7ff, #77ffa5);
+      box-shadow: 0 8px 20px rgba(83, 251, 255, 0.35);
+    }
+
+    .hint {
+      text-align: center;
+      font-size: 0.92rem;
+      opacity: 0.82;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hud">
+      <div class="stat" id="score">Score: 0</div>
+      <div class="stat" id="time">Time: 30.0s</div>
+      <div class="stat" id="status">Play!</div>
+    </div>
+
+    <div class="game-shell">
+      <canvas id="game" width="960" height="540" aria-label="Game area"></canvas>
+      <div class="overlay show" id="overlay">
+        <div class="panel">
+          <h1>Neon Brick Click Blast</h1>
+          <p>Break bricks with the bouncing ball and click floating orbs for bonus points.</p>
+          <p>Golden bricks are rare and worth <b>30</b> points. Round ends if ball drops below your paddle or when 30s runs out.</p>
+          <button id="startBtn">Start Round</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="hint">Move paddle with mouse or touch. Tap/click bonus balls to burst them.</div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const overlay = document.getElementById('overlay');
+    const startBtn = document.getElementById('startBtn');
+    const scoreEl = document.getElementById('score');
+    const timeEl = document.getElementById('time');
+    const statusEl = document.getElementById('status');
+
+    const W = canvas.width;
+    const H = canvas.height;
+    const ROUND_SECONDS = 30;
+
+    let score = 0;
+    let running = false;
+    let timeLeft = ROUND_SECONDS;
+    let lastTs = 0;
+    let pointerX = W / 2;
+
+    const paddle = { width: 150, height: 16, x: W / 2 - 75, y: H - 36 };
+    const ball = { x: W / 2, y: H - 65, r: 11, vx: 290, vy: -290 };
+
+    const bricks = [];
+    const fxParticles = [];
+    const clickOrbs = [];
+
+    const BRICK_ROWS = 6;
+    const BRICK_COLS = 12;
+    const BRICK_W = 66;
+    const BRICK_H = 24;
+    const BRICK_GAP = 9;
+    const BRICK_TOP = 48;
+    const BRICK_LEFT = Math.round((W - (BRICK_COLS * BRICK_W + (BRICK_COLS - 1) * BRICK_GAP)) / 2);
+
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+    function beep(type = 'sine', freq = 480, duration = 0.08, volume = 0.08) {
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      const now = audioCtx.currentTime;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, now);
+      gain.gain.setValueAtTime(volume, now);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(now);
+      osc.stop(now + duration);
+    }
+
+    function burst(x, y, color, count = 18) {
+      for (let i = 0; i < count; i++) {
+        const a = (Math.PI * 2 * i) / count + Math.random() * 0.4;
+        const speed = 70 + Math.random() * 170;
+        fxParticles.push({
+          x, y,
+          vx: Math.cos(a) * speed,
+          vy: Math.sin(a) * speed,
+          life: 0.45 + Math.random() * 0.35,
+          maxLife: 0.45 + Math.random() * 0.35,
+          color,
+          size: 2 + Math.random() * 4
+        });
+      }
+    }
+
+    function resetBricks() {
+      bricks.length = 0;
+      const hues = [340, 300, 260, 220, 180, 140];
+      for (let r = 0; r < BRICK_ROWS; r++) {
+        for (let c = 0; c < BRICK_COLS; c++) {
+          const x = BRICK_LEFT + c * (BRICK_W + BRICK_GAP);
+          const y = BRICK_TOP + r * (BRICK_H + BRICK_GAP);
+          const isGolden = Math.random() < 0.08;
+          bricks.push({
+            x, y,
+            w: BRICK_W,
+            h: BRICK_H,
+            alive: true,
+            golden: isGolden,
+            points: isGolden ? 30 : 10,
+            hue: isGolden ? 48 : hues[r % hues.length] + Math.random() * 20
+          });
+        }
+      }
+    }
+
+    function updateHud() {
+      scoreEl.textContent = `Score: ${score}`;
+      timeEl.textContent = `Time: ${Math.max(0, timeLeft).toFixed(1)}s`;
+    }
+
+    function clamp(v, min, max) {
+      return Math.max(min, Math.min(max, v));
+    }
+
+    function setPointer(clientX) {
+      const rect = canvas.getBoundingClientRect();
+      const x = ((clientX - rect.left) / rect.width) * W;
+      pointerX = clamp(x, paddle.width / 2, W - paddle.width / 2);
+    }
+
+    function spawnOrb() {
+      const r = 14 + Math.random() * 11;
+      clickOrbs.push({
+        x: r + Math.random() * (W - r * 2),
+        y: H * 0.26 + Math.random() * (H * 0.48),
+        r,
+        life: 2.2,
+        hue: Math.floor(Math.random() * 360)
+      });
+    }
+
+    function tryClickOrb(clientX, clientY) {
+      if (!running) return;
+      const rect = canvas.getBoundingClientRect();
+      const x = ((clientX - rect.left) / rect.width) * W;
+      const y = ((clientY - rect.top) / rect.height) * H;
+
+      for (let i = clickOrbs.length - 1; i >= 0; i--) {
+        const o = clickOrbs[i];
+        if ((x - o.x) ** 2 + (y - o.y) ** 2 <= o.r ** 2) {
+          clickOrbs.splice(i, 1);
+          score += 5;
+          updateHud();
+          burst(o.x, o.y, `hsl(${o.hue}, 95%, 62%)`, 26);
+          beep('triangle', 780, 0.09, 0.12);
+          break;
+        }
+      }
+    }
+
+    function startRound() {
+      score = 0;
+      timeLeft = ROUND_SECONDS;
+      running = true;
+      lastTs = 0;
+      paddle.x = W / 2 - paddle.width / 2;
+      ball.x = W / 2;
+      ball.y = H - 65;
+      ball.vx = (Math.random() > 0.5 ? 1 : -1) * 290;
+      ball.vy = -290;
+      fxParticles.length = 0;
+      clickOrbs.length = 0;
+      resetBricks();
+      updateHud();
+      statusEl.textContent = 'Play!';
+      overlay.classList.remove('show');
+    }
+
+    function finishRound(message) {
+      running = false;
+      statusEl.textContent = message;
+      overlay.querySelector('h1').textContent = message;
+      overlay.querySelector('p').innerHTML = `Final score: <b>${score}</b>`;
+      overlay.querySelectorAll('p')[1].textContent = 'Golden bricks: +30. Orb pops: +5. Regular bricks: +10.';
+      startBtn.textContent = 'Play Again';
+      overlay.classList.add('show');
+      beep('sawtooth', 150, 0.28, 0.09);
+    }
+
+    function circleRectHit(cx, cy, cr, rx, ry, rw, rh) {
+      const nearestX = clamp(cx, rx, rx + rw);
+      const nearestY = clamp(cy, ry, ry + rh);
+      const dx = cx - nearestX;
+      const dy = cy - nearestY;
+      return dx * dx + dy * dy <= cr * cr;
+    }
+
+    function update(dt) {
+      paddle.x += (pointerX - (paddle.x + paddle.width / 2)) * Math.min(1, dt * 14);
+      paddle.x = clamp(paddle.x, 0, W - paddle.width);
+
+      timeLeft -= dt;
+      if (timeLeft <= 0) {
+        finishRound('Time Up!');
+        return;
+      }
+
+      if (Math.random() < dt * 1.6 && clickOrbs.length < 6) {
+        spawnOrb();
+      }
+
+      for (let i = clickOrbs.length - 1; i >= 0; i--) {
+        clickOrbs[i].life -= dt;
+        if (clickOrbs[i].life <= 0) clickOrbs.splice(i, 1);
+      }
+
+      ball.x += ball.vx * dt;
+      ball.y += ball.vy * dt;
+
+      if (ball.x - ball.r <= 0) {
+        ball.x = ball.r;
+        ball.vx = Math.abs(ball.vx);
+        beep('square', 260, 0.04, 0.05);
+      } else if (ball.x + ball.r >= W) {
+        ball.x = W - ball.r;
+        ball.vx = -Math.abs(ball.vx);
+        beep('square', 260, 0.04, 0.05);
+      }
+
+      if (ball.y - ball.r <= 0) {
+        ball.y = ball.r;
+        ball.vy = Math.abs(ball.vy);
+        beep('square', 260, 0.04, 0.05);
+      }
+
+      if (ball.y - ball.r > paddle.y + paddle.height) {
+        finishRound('Game Over');
+        return;
+      }
+
+      if (circleRectHit(ball.x, ball.y, ball.r, paddle.x, paddle.y, paddle.width, paddle.height) && ball.vy > 0) {
+        const relative = ((ball.x - paddle.x) / paddle.width - 0.5) * 2;
+        const speed = Math.min(560, Math.hypot(ball.vx, ball.vy) + 16);
+        const bounceAngle = relative * 1.08;
+        ball.vx = speed * Math.sin(bounceAngle);
+        ball.vy = -Math.abs(speed * Math.cos(bounceAngle));
+        ball.y = paddle.y - ball.r - 0.2;
+        beep('triangle', 360, 0.05, 0.06);
+      }
+
+      for (const brick of bricks) {
+        if (!brick.alive) continue;
+        if (!circleRectHit(ball.x, ball.y, ball.r, brick.x, brick.y, brick.w, brick.h)) continue;
+
+        brick.alive = false;
+        score += brick.points;
+        updateHud();
+
+        const overlapLeft = Math.abs(ball.x + ball.r - brick.x);
+        const overlapRight = Math.abs(brick.x + brick.w - (ball.x - ball.r));
+        const overlapTop = Math.abs(ball.y + ball.r - brick.y);
+        const overlapBottom = Math.abs(brick.y + brick.h - (ball.y - ball.r));
+        const minOverlap = Math.min(overlapLeft, overlapRight, overlapTop, overlapBottom);
+
+        if (minOverlap === overlapLeft || minOverlap === overlapRight) {
+          ball.vx *= -1;
+        } else {
+          ball.vy *= -1;
+        }
+
+        burst(ball.x, ball.y, brick.golden ? 'hsl(45,100%,65%)' : `hsl(${brick.hue},95%,60%)`, brick.golden ? 30 : 18);
+        beep(brick.golden ? 'sawtooth' : 'square', brick.golden ? 620 : 440, brick.golden ? 0.12 : 0.06, brick.golden ? 0.12 : 0.08);
+        break;
+      }
+
+      for (let i = fxParticles.length - 1; i >= 0; i--) {
+        const p = fxParticles[i];
+        p.life -= dt;
+        if (p.life <= 0) {
+          fxParticles.splice(i, 1);
+          continue;
+        }
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.vx *= 0.985;
+        p.vy = p.vy * 0.985 + 26 * dt;
+      }
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, W, H);
+
+      const gridAlpha = 0.07;
+      ctx.save();
+      ctx.strokeStyle = `rgba(116, 159, 255, ${gridAlpha})`;
+      ctx.lineWidth = 1;
+      for (let x = 0; x < W; x += 40) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, H);
+        ctx.stroke();
+      }
+      for (let y = 0; y < H; y += 40) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(W, y);
+        ctx.stroke();
+      }
+      ctx.restore();
+
+      for (const brick of bricks) {
+        if (!brick.alive) continue;
+        const gradient = ctx.createLinearGradient(brick.x, brick.y, brick.x + brick.w, brick.y + brick.h);
+        if (brick.golden) {
+          gradient.addColorStop(0, '#fff7a8');
+          gradient.addColorStop(0.5, '#ffd647');
+          gradient.addColorStop(1, '#ff9f1a');
+          ctx.shadowColor = 'rgba(255, 214, 85, 0.9)';
+          ctx.shadowBlur = 18;
+        } else {
+          gradient.addColorStop(0, `hsl(${brick.hue}, 95%, 67%)`);
+          gradient.addColorStop(1, `hsl(${brick.hue + 28}, 90%, 49%)`);
+          ctx.shadowColor = `hsla(${brick.hue}, 90%, 55%, 0.45)`;
+          ctx.shadowBlur = 9;
+        }
+        ctx.fillStyle = gradient;
+        ctx.fillRect(brick.x, brick.y, brick.w, brick.h);
+
+        ctx.strokeStyle = 'rgba(255,255,255,0.32)';
+        ctx.lineWidth = 1.4;
+        ctx.strokeRect(brick.x + 0.8, brick.y + 0.8, brick.w - 1.6, brick.h - 1.6);
+      }
+      ctx.shadowBlur = 0;
+
+      for (const o of clickOrbs) {
+        const pulse = 0.5 + 0.5 * Math.sin((2.2 - o.life) * 12);
+        const rr = o.r + pulse * 3;
+        const g = ctx.createRadialGradient(o.x - rr * 0.2, o.y - rr * 0.2, rr * 0.1, o.x, o.y, rr);
+        g.addColorStop(0, '#ffffff');
+        g.addColorStop(0.22, `hsl(${o.hue}, 100%, 70%)`);
+        g.addColorStop(1, `hsla(${o.hue}, 100%, 38%, 0.65)`);
+        ctx.fillStyle = g;
+        ctx.shadowColor = `hsla(${o.hue}, 100%, 60%, 0.8)`;
+        ctx.shadowBlur = 20;
+        ctx.beginPath();
+        ctx.arc(o.x, o.y, rr, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.shadowBlur = 0;
+
+      const padGrad = ctx.createLinearGradient(paddle.x, paddle.y, paddle.x, paddle.y + paddle.height);
+      padGrad.addColorStop(0, '#b3f4ff');
+      padGrad.addColorStop(1, '#3bc2f8');
+      ctx.fillStyle = padGrad;
+      ctx.shadowColor = 'rgba(89, 216, 255, 0.8)';
+      ctx.shadowBlur = 14;
+      const radius = 7;
+      ctx.beginPath();
+      ctx.moveTo(paddle.x + radius, paddle.y);
+      ctx.lineTo(paddle.x + paddle.width - radius, paddle.y);
+      ctx.quadraticCurveTo(paddle.x + paddle.width, paddle.y, paddle.x + paddle.width, paddle.y + radius);
+      ctx.lineTo(paddle.x + paddle.width, paddle.y + paddle.height - radius);
+      ctx.quadraticCurveTo(paddle.x + paddle.width, paddle.y + paddle.height, paddle.x + paddle.width - radius, paddle.y + paddle.height);
+      ctx.lineTo(paddle.x + radius, paddle.y + paddle.height);
+      ctx.quadraticCurveTo(paddle.x, paddle.y + paddle.height, paddle.x, paddle.y + paddle.height - radius);
+      ctx.lineTo(paddle.x, paddle.y + radius);
+      ctx.quadraticCurveTo(paddle.x, paddle.y, paddle.x + radius, paddle.y);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      const bg = ctx.createRadialGradient(ball.x - 4, ball.y - 5, 2, ball.x, ball.y, ball.r + 2);
+      bg.addColorStop(0, '#ffffff');
+      bg.addColorStop(0.35, '#ffd6ff');
+      bg.addColorStop(1, '#ff4ed5');
+      ctx.fillStyle = bg;
+      ctx.shadowColor = 'rgba(255, 84, 224, 0.85)';
+      ctx.shadowBlur = 16;
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      for (const p of fxParticles) {
+        const alpha = p.life / p.maxLife;
+        ctx.fillStyle = p.color.replace(')', `, ${alpha})`).replace('hsl', 'hsla');
+        ctx.fillRect(p.x, p.y, p.size, p.size);
+      }
+    }
+
+    function loop(ts) {
+      if (!lastTs) lastTs = ts;
+      const dt = Math.min(0.033, (ts - lastTs) / 1000);
+      lastTs = ts;
+
+      if (running) {
+        update(dt);
+        updateHud();
+      }
+      draw();
+
+      requestAnimationFrame(loop);
+    }
+
+    canvas.addEventListener('mousemove', (e) => setPointer(e.clientX));
+    canvas.addEventListener('touchmove', (e) => {
+      if (e.touches[0]) setPointer(e.touches[0].clientX);
+      e.preventDefault();
+    }, { passive: false });
+
+    canvas.addEventListener('mousedown', (e) => {
+      setPointer(e.clientX);
+      tryClickOrb(e.clientX, e.clientY);
+    });
+
+    canvas.addEventListener('touchstart', (e) => {
+      if (!e.touches[0]) return;
+      const t = e.touches[0];
+      setPointer(t.clientX);
+      tryClickOrb(t.clientX, t.clientY);
+      e.preventDefault();
+    }, { passive: false });
+
+    startBtn.addEventListener('click', startRound);
+
+    resetBricks();
+    updateHud();
+    draw();
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
